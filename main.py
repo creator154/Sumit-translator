@@ -13,7 +13,7 @@ FONT_PATH = "NotoSansDevanagari.ttf"
 FONT_URL = "https://github.com"
 
 def download_hindi_font():
-    """Heroku पर हिंदी फॉन्ट सुनिश्चित करना ताकि अक्षर सही दिखें"""
+    """Heroku पर हिंदी फॉन्ट सुनिश्चित करना"""
     if not os.path.exists(FONT_PATH):
         print("Downloading Hindi Font...")
         response = requests.get(FONT_URL)
@@ -23,13 +23,13 @@ def download_hindi_font():
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 नमस्ते! मुझे कोई भी English PDF फाइल भेजें। मैं उसके लेआउट, फिगर्स और डायग्राम्स को वैसे ही रखते हुए सिर्फ टेक्स्ट को हिंदी में बदलकर आपको दूंगा।")
+    bot.reply_to(message, "👋 नमस्ते! मुझे कोई भी English PDF फ़ाइल भेजें। मैं लेआउट और फिगर्स को सुरक्षित रखते हुए तुरंत उसे हिंदी PDF में बदल दूंगा।")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     if message.document.mime_type == 'application/pdf':
         chat_id = message.chat.id
-        bot.reply_to(message, "⏳ आपकी PDF मिल गई है। लेआउट और फिगर्स को सुरक्षित रखते हुए हिंदी अनुवाद किया जा रही है, कृपया कुछ सेकंड इंतज़ार करें...")
+        status_msg = bot.reply_to(message, "⏳ आपकी PDF मिल गई है। तेज़ स्पीड (Batch Mode) में अनुवाद शुरू हो रहा है, कृपया थोड़ा इंतज़ार करें...")
 
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -42,30 +42,38 @@ def handle_docs(message):
 
         try:
             download_hindi_font()
-            
-            # ओरिजिनल PDF को खोलना
             doc = fitz.open(input_pdf_path)
             
             for page in doc:
-                # पेज से सारे टेक्स्ट ब्लॉक्स और उनकी लोकेशन (Coordinates) निकालना
                 blocks = page.get_text("blocks")
+                text_to_translate = []
+                valid_blocks = []
                 
+                # 1. इस पेज के सभी टेक्स्ट ब्लॉक्स को इकट्ठा करें
                 for b in blocks:
                     x0, y0, x1, y1, text, block_no, block_type = b
-                    
-                    # अगर ब्लॉक में टेक्स्ट है (block_type 0 मतलब टेक्स्ट, फिगर्स/इमेज नहीं)
                     if block_type == 0 and text.strip():
-                        try:
-                            # इंग्लिश टेक्स्ट का हिंदी अनुवाद
-                            translation = translator.translate(text, src='en', dest='hi')
-                            translated_text = translation.text
+                        text_to_translate.append(text)
+                        valid_blocks.append(b)
+                
+                # 2. पूरे पेज का अनुवाद एक ही बार (Batch) में करें ताकि बॉट न अटके
+                if text_to_translate:
+                    try:
+                        translations = translator.translate(text_to_translate, src='en', dest='hi')
+                        
+                        # अगर केवल 1 ब्लॉक है तो उसे लिस्ट में बदलें
+                        if not isinstance(translations, list):
+                            translations = [translations]
                             
-                            # पुराना इंग्लिश टेक्स्ट छुपाने के लिए उसपर वाइट रेक्टेंगल बनाना
+                        # 3. अनुवादित टेक्स्ट को वापस PDF लेआउट पर उसी जगह सेट करें
+                        for b, trans in zip(valid_blocks, translations):
+                            x0, y0, x1, y1, text, block_no, block_type = b
+                            translated_text = trans.text
+                            
+                            # पुराना टेक्स्ट छिपाएं और नया हिंदी टेक्स्ट ओवरले करें
                             rect = fitz.Rect(x0, y0, x1, y1)
                             page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                             
-                            # उसी बॉक्स के अंदर हिंदी फॉन्ट के साथ नया टेक्स्ट लिखना
-                            # इससे फिगर्स और डायग्राम्स अपनी जगह पर सुरक्षित रहेंगे
                             page.insert_textbox(
                                 rect, 
                                 translated_text, 
@@ -74,24 +82,24 @@ def handle_docs(message):
                                 fontsize=9,
                                 align=0
                             )
-                        except Exception as translation_error:
-                            print(f"Block translation error: {translation_error}")
-                            continue
+                    except Exception as page_err:
+                        print(f"Page translation error: {page_err}")
+                        continue
 
-            # नई मॉडिफाइड PDF सेव करना
+            # मॉडिफाइड PDF सेव करें
             doc.save(output_pdf_path)
             doc.close()
 
-            # यूजर को ट्रांसलेटेड PDF वापस भेजना
+            # पुरानी स्टेटस मैसेज डिलीट करके नई PDF भेजें
+            bot.delete_message(chat_id, status_msg.message_id)
             with open(output_pdf_path, 'rb') as pdf_to_send:
-                bot.send_document(chat_id, pdf_to_send, caption="✅ लेआउट और फिगर्स के साथ आपकी हिंदी PDF तैयार है!")
+                bot.send_document(chat_id, pdf_to_send, caption="✅ लेआउट, फिगर्स और डायग्राम्स के साथ आपकी हिंदी PDF तैयार है!")
 
         except Exception as e:
-            bot.reply_to(message, "❌ इस PDF को प्रोसेस करने में कोई समस्या आई। कृपया सुनिश्चित करें कि यह स्कैन की हुई इमेज न हो।")
-            print(f"Error: {e}")
+            bot.reply_to(message, "❌ इस PDF को प्रोसेस करने में कोई समस्या आई।")
+            print(f"Global Error: {e}")
             
         finally:
-            # टेम्परेरी फाइलों को डिलीट करना
             if os.path.exists(input_pdf_path):
                 os.remove(input_pdf_path)
             if os.path.exists(output_pdf_path):
@@ -101,5 +109,5 @@ def handle_docs(message):
 
 if __name__ == "__main__":
     download_hindi_font()
-    print("Layout-Preserving Bot is running on Heroku...")
+    print("Fast Layout-Preserving Bot is running...")
     bot.infinity_polling()
