@@ -1,4 +1,6 @@
 pyTelegramBotAPI
-googletrans==4.0.0-rc1
 pymupdf
 requests
+deep-translator
+easyocr
+torch --index-url https://pytorch.org
