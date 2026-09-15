@@ -1,200 +1,101 @@
-import os, time, platform
+import os
+import time
 import sys
 
 try:
     from telethon.sync import TelegramClient
-except:
+except ImportError:
     os.system("pip install telethon")
-    from telethon.sync import TelegramClient
 
 from telethon.tl import types
 from telethon import functions
-from prettytable import PrettyTable
+from telethon.errors import FloodWaitError
 
-def re(text):
-    for char in text:
-        print(char, end='', flush=True)
-        time.sleep(0.001)  
+# एनवायरनमेंट वेरिएबल्स से इनपुट लेना (Heroku Config Vars)
+# अपने Heroku Dashboard में Settings -> Config Vars में ये नाम जोड़ें
+API_ID = int(os.environ.get("API_ID", 1234567))  # अपना डिफ़ॉल्ट ID यहाँ भी डाल सकते हैं
+API_HASH = os.environ.get("API_HASH", "your_api_hash_here")
+TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL", "@example_channel")
+REPORT_COUNT = int(os.environ.get("REPORT_COUNT", 5))
+
+# आपके लॉग के हिसाब से '2' नंबर (Reporter Other) सिलेक्टेड है
+METHOD = os.environ.get("REPORT_METHOD", "2") 
+
+# SyntaxWarning को ठीक करने के लिए 'r' लगाया गया है
+account = r"""
+ ____                             _               
+
+|  _ \   ___  _ __    ___   _ __ | |_   ___  _ __ 
+| |_) | / _ \| '_ \  / _ \ | '__|| __| / _ \| '__|
+|  _ < |  __/| |_) || (_) || |   | |_ |  __/| |    
+|_| \_\ \___|| .__/  \___/ |_|    \__| \___||_|   
+             |_|	
+"""
+
+SESSION_DIR = "sessions"
+
+def start_reporting():
+    if not os.path.exists(SESSION_DIR):
+        print(f"[-] '{SESSION_DIR}' folder not found. Please add your .session files.")
+        sys.exit(0)
+
+    session_files = [f for f in os.listdir(SESSION_DIR) if f.endswith('.session')]
+    if not session_files:
+        print("[-] No session files found in the sessions directory.")
+        sys.exit(0)
+
+    print(f"[+] Total {len(session_files)} accounts loaded. Target: {TARGET_CHANNEL}")
+
+    reasons = {
+        "1": (types.InputReportReasonSpam(), "This channel contains spam content."),
+        "2": (types.InputReportReasonOther(), "This channel is leaking copyrighted coaching lectures without authorization."),
+        "3": (types.InputReportReasonViolence(), "This channel contains violent content."),
+        "4": (types.InputReportReasonPornography(), "This channel has pornographic content."),
+        "5": (types.InputReportReasonCopyright(), "Block this channel due to copyright violation."),
+        "6": (types.InputReportReasonFake(), "Block this channel due to scam and impersonation."),
+    }
+
+    reason_obj, default_message = reasons.get(METHOD, (types.InputReportReasonOther(), "Copyright infringement."))
+
+    for session_file in session_files:
+        session_name = session_file.replace('.session', '')
+        session_path = os.path.join(SESSION_DIR, session_name)
         
-rd, gn, lgn, yw, lrd, be, pe = '\033[00;31m', '\033[00;32m', '\033[01;32m', '\033[01;33m', '\033[01;31m', '\033[94m', '\033[01;35m'
-cn, k, g = '\033[00;36m', '\033[90m', '\033[38;5;130m'
-
-print(f"{lrd}")
-t = PrettyTable([f'{cn}Number{lrd}', f'{cn}Method{lrd}'])
-t.add_row([f'{lgn}1{lrd}', f'{gn}Report Spam{lrd}'])
-t.add_row([f'{lgn}2{lrd}', f'{gn}Report Pornography{lrd}'])
-t.add_row([f'{lgn}3{lrd}', f'{gn}Report Violence{lrd}'])
-t.add_row([f'{lgn}4{lrd}', f'{gn}Report Child Abuse{lrd}'])
-t.add_row([f'{lgn}5{lrd}', f'{gn}Report Other{lrd}'])
-t.add_row([f'{lgn}6{lrd}', f'{gn}Report CopyRith{lrd}'])
-t.add_row([f'{lgn}7{lrd}', f'{gn}Report Fake{lrd}'])
-t.add_row([f'{lgn}8{lrd}', f'{gn}Report Geo Irrelevant{lrd}'])
-t.add_row([f'{lgn}9{lrd}', f'{gn}Report Illegal Drugs{lrd}'])
-t.add_row([f'{lgn}10{lrd}', f'{gn}Report Personal Details{lrd}'])
-
-def clear():
-    if 'Windows' in platform.uname():
+        print(f"[*] Connecting account: {session_name}")
+        client = TelegramClient(session_path, API_ID, API_HASH)
+        
         try:
-            from colorama import init
-        except:
-            os.system("pip install colorama")
-            from colorama import init
-        init()
-        os.system("cls")
-    else:
-        os.system("clear")
-
-clear()
-re(f"""{g}
-  _____      __      _   _________     ____    
- (_   _)    /  \    / ) (_   _____)   / __ \   
-
-   | |     / /\ \  / /    ) (___     / /  \ \  
-   | |     ) ) ) ) ) )   (   ___)   ( ()  () ) 
-   | |    ( ( ( ( ( (     ) (       ( ()  () ) 
-  _| |__  / /  \ \/ /    (   )       \ \__/ /  
- /_____( (_/    \__/      \_/         \____/
-""")
-
-account = f"""{k}
-                                                                 
-                    .---:                :---.                   
-               .=++*+=+#+                +#*=+*++=.              
-             =#*+++=++-=#                #==++=+++*#=            
-           =%++**==**-*+#=   {rd}Reporter{k}   =#+*-**==**++%=          
-         .#*+***=+**-*+##+.   {gn}Account{k}   .+*%+*-**+=***+*%:        
-        -%=****-***=+*=%@+=            =+@%=*+=***-****=%-       
-       -%=****-****-***++@#.          .#@++***-****-****=%-      
-      .%=****=+***+=****-=%@=*:=#%=.*=@%=-****=+***+=****=%.     
-      *+*****-****=*****-+=#%*%#@@#%*%#=+-*****=****-*****=#     
-     .%=****=+¼***-*-..::%@@@+@@@@@@*@@@%-:..-*-****+=****=#.    
-     ++*****-*+-:::.    @@@@@*%@@@@%*@@@@@    .:::-+*-*****++    
-     *=***++-=         :@@@@@@##@@##@@@@@@:         =-++***=#    
-     *=+:               %@@%#@@@##@@@##@@%               :+=#    
-     +-            .... =@@@+@@@@@@@@+@@@= ....            -*    
-     =          *@@@@@@@+@@@=@@@@@@@@=@@@+@@@@@@@*          =    
-               :@@@@@@@@+@@%##%@@@@@###@@+@@@@@@@@:              
-               .@@@@##%@+@@%*@@@@@@@@*%@@+@%##@@@@.              
-                .*@@@@%#*+@@#%@@@@@@%#@@+*#%@@@@#:               
-                  .=#@@@@*%@@-*+--+*-@@%*@@@@#=.                 
-                      :=*@+@@:.    .-@@+@#=:                     
-                          #*@=      =@*#                         
-                         :%=@+      +@=%:                        
-                       +****%*+=  =+*%****+                      
-                        .-.=-        -=.-.                       
-
-	{lrd}[{lgn}+{lrd}] {gn}Channel : {lgn}@Esfelurm	
-			"""	 
-
-class TelegramReporter:
-    def __init__(self):
-        # --- यहाँ सारे input() फ़ंक्शंस को Heroku config variables में बदल दिया गया है ---
-        self.api_id = os.environ.get("TELEGRAM_API_ID")
-        self.api_hash = os.environ.get("TELEGRAM_API_HASH")
-        self.phone_number = os.environ.get("TELEGRAM_PHONE")
-        self.password = os.environ.get("TELEGRAM_PASSWORD", "")  # optional है, न हो तो खाली रहेगा
-        
-        clear()
-        re(account)
-        print(f"{lrd}")
-        print(t)
-        
-        # dynamic variables (method, targeting info)
-        self.method = os.environ.get("REPORT_METHOD", "1")  # Default to 1 (Spam)
-        self.scammer_id = os.environ.get("TARGET_USERNAME")
-        self.number = os.environ.get("REPORT_COUNT", "10")  # Default to 10 reports
-        
-        print(f"{gn}[+] Configuration loaded dynamically from Environment variables.{k}")
-
-    def report_spam(self):
-        # Heroku पर Telethon क्लाइंट को बिना टर्मिनल प्रॉम्प्ट के बैकग्राउंड में शुरू करने के लिए
-        client = TelegramClient('reporter', self.api_id, self.api_hash)
-        
-        # Automatic start method (बिना इनपुट प्रॉम्प्ट के)
-        client.start(phone=self.phone_number, password=self.password)
-
-        try:
-            user = client.get_entity(self.scammer_id)
-            scammer_input_peer = types.InputPeerUser(user_id=user.id, access_hash=user.access_hash)
-        except ValueError:
-            print(f'{lrd}[{rd}!{lrd}] {k}No such person was found')
-            client.disconnect()
-            return
+            client.connect()
+            if not client.is_user_authorized():
+                print(f"[-] Session {session_name} is unauthorized. Skipping.")
+                continue
             
-        if self.method == "1":
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonSpam(),
-                    message=''
-                ))
-                print(f"{lrd}[{lgn}+{lrd}] {gn}A spam report has been sent : {i}")
+            try:
+                channel_entity = client.get_entity(TARGET_CHANNEL)
+            except Exception:
+                print(f"[-] Target channel {TARGET_CHANNEL} not found.")
+                break
 
-        elif self.method == "2":
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonPornography(),
-                    message=''
-                ))
-                print(f"{lrd}[{lgn}+{lrd}] {gn}A Pornogaphy report has been sent : {i}")
-                    
-        elif self.method == "3":
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonViolence(),
-                    message=''
-                ))
-                print(f"\n{lrd}[{lgn}+{lrd}] {gn}A Violence report has been sent : {i}")                                        
-        elif self.method == "4":
-            report_message = 'This user is suspected of child abuse'
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonChildAbuse(),
-                    message=report_message
-                ))
-                print(f"\n{lrd}[{lgn}+{lrd}] {gn}A Child Abuse report has been sent : {i}")                                        
-        elif self.method == "5":
-            message = os.environ.get("CUSTOM_REPORT_MESSAGE", "Reported for abuse.")
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonOther(),
-                    message=message
-                ))
-                print(f"\n{lrd}[{lgn}+{lrd}] {gn}A Other report has been sent : {i}")                                                
-                    
-        elif self.method == "6":
-            report_message = 'This user is suspected of Copyright'
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonCopyright(),
-                    message=report_message
-                )) 
-                print(f"\n{lrd}[{lgn}+{lrd}] {gn}A CopyRight report has been sent : {i}")           
-        elif self.method == "7":
-            report_message = 'This user is suspected of fake'
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonFake(),
-                    message=report_message
-                ))
-                print(f"\n{lrd}[{lgn}+{lrd}] {gn}A Fake report has been sent : {i}")                                                                                                                                                                                                                                                                                                                                                                                                  
-        elif self.method == "8":
-            report_message = 'This user is suspected of Geo Irrelevant'
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
-                    reason=types.InputReportReasonGeoIrrelevant(),
-                    message=report_message
-                )) 
-                print(f"\n{lrd}[{lgn}+{lrd}] {gn}A Geo Irrelevant report has been sent : {i}")                                                                                                                                                                                                                                                                                                                                                                                       
-        elif self.method == "9":
-            report_message = 'This user is suspected of Illegal Drugs'
-            for i in range(0, int(self.number)):
-                client(functions.account.ReportPeerRequest(
-                    peer=scammer_input_peer,
+            # यहाँ पर ब्रैकेट को सही ढंग से बंद (Fix) कर दिया गया है
+            for i in range(1, REPORT_COUNT + 1):
+                try:
+                    client(functions.messages.ReportRequest(
+                        peer=channel_entity,
+                        id=[42],
+                        reason=reason_obj,
+                        message=default_message
+                    ))
+                    print(f"[+] Report #{i} sent successfully from {session_name}")
+                    time.sleep(2)
+                except FloodWaitError as e:
+                    print(f"[!] FloodWait error: {e.seconds} seconds. Moving to next account.")
+                    break
+        except Exception as e:
+            print(f"[!] Error with account {session_name}: {str(e)}")
+        finally:
+            client.disconnect()
+            print("-" * 40)
+            time.sleep(4)
+
+if __name__ == "__main__":
+    start_reporting()
