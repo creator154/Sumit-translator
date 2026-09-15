@@ -1,4 +1,2 @@
-pyTelegramBotAPI
-pymupdf
-requests
-deep-translator
+heretelethon
+prettytable
