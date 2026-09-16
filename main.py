@@ -1,81 +1,81 @@
-import time, os, platform
-import sys
+import os
+import telebot
+import requests
+import time
 
-try:
-    from prettytable import PrettyTable
-except:
-    os.system("pip install prettytable")
-    from prettytable import PrettyTable
+# Heroku Environment Variable से टोकन उठाना
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+bot = telebot.TeleBot(BOT_TOKEN)
 
-rd, gn, lgn, yw, lrd, be, pe = '\033[00;31m', '\033[00;32m', '\033[01;32m', '\033[01;33m', '\033[01;31m', '\033[94m', '\033[01;35m'
-cn, k, g = '\033[00;36m', '\033[90m', '\033[38;5;130m'
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, "👋 नमस्ते! मुझे कोई भी NEET, Scanned या फोटो वाली English PDF भेजें। मैं Google Cloud Engine से उसकी डिज़ाइन और फिगर्स को सुरक्षित रखते हुए उसे पूरी तरह हिंदी PDF में बदल दूँगा।")
 
-def re(text):
-    for char in text:
-        print(char, end='', flush=True)
-        time.sleep(0.001)  
+@bot.message_handler(content_types=['document'])
+def handle_docs(message):
+    if message.document.mime_type == 'application/pdf':
+        chat_id = message.chat.id
+        status_msg = bot.reply_to(message, "⏳ Scanned PDF मिल गई है। Google Cloud OCR अनुवाद शुरू हो रहा है (इसमें 10-20 सेकंड लग सकते हैं), कृपया इंतज़ार करें...")
 
-if 'Windows' in platform.uname():
-    from colorama import init
-    init()
+        # टेलीग्राम से फाइल डाउनलोड करना
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        input_pdf_path = f"input_{chat_id}.pdf"
+        output_pdf_path = f"translated_{chat_id}.pdf"
 
-banner = f"""
-                                                                 
-{k}                                                                
-                              -     -                            
-                            .+       +.                          
-                           :#         #:                         
-                          =%           %-                        
-   {lrd} Telegram {k}  -{g} Jay Ghunawat{k}   .%+    {be} Max Reporter   {k}       
-                        #@:             -@#                      
-                     :  #@:             :@*  :                   
-                    -=  *@:             -@*  =-                  
-                   -%   *@-             =@+   %-                 
-                  -@=  .*@+             +@+.  =@-                
-                 =@%   .+@%-    :.:    -@@+.   #@:               
-                =@@#:     =%%-+@@@@@+-%%=     .#@@=              
-                 .+%@%+:.   -#@@@@@@@#-   .:=#@%=                
-                    -##%%%%%#*@@@@@@@*#%%%%%##-                  
-                  .*#######%@@@@@@@@@@@%#######*.                
-               .=#@%*+=--#@@@@@@@@@@@@@@@#--=+*%@#=.             
-            .=#@%+:     *@@@@@+.   .+@@@@@*     :+%@#=.          
-          :*@@=.    .=#@@@@@@@       @@@@@@@#=.    .=@@*.        
-            =@+    .%@@*%@@@@@*     *@@@@@%*@@%.    +@=          
-             :@=    +@# :@@@@@#     #@@@@%. #@+    =@:           
-              .#-   :@@  .%@@#       #@@#.  @@:   -#.            
-                +:   %@:   =%         %=   :@%   -+              
-                 -.  +@+                   +@+  .-               
-                  .  :@#                   #@:  .                
-                    @{cn}@Mannucybersecurity{k}@%                    
-                      :+@:               =@+:                    
-                        =@:             :@-                      
-                         -%.           .%:                       
-                          .#           #.                        
-                            +         +                          
-                             -       -                     
-"""
+        with open(input_pdf_path, 'wb') as new_file:
+            new_file.write(downloaded_file)
 
-re(banner)
-re("Warning ! This is a test reporter, any offense is the responsibility of the user !\n")
-print(f"{lrd}")
+        try:
+            # 🚀 Google Translate Document API का मुफ्त वेब गेटवे उपयोग करना
+            # यह पूरी PDF को बिना तोड़े डिज़ाइन के साथ अनुवाद करता है
+            url = "https://googleapis.com"
+            
+            with open(input_pdf_path, 'rb') as f:
+                payload = {
+                    'client': 'webapp',
+                    'sl': 'en',  # Source Language: English
+                    'tl': 'hi',  # Target Language: Hindi
+                    'f': 'pdf'   # File type
+                }
+                files = [
+                    ('file', ('document.pdf', f, 'application/pdf'))
+                ]
+                
+                # गूगल सर्वर को फाइल भेजना
+                response = requests.post(url, data=payload, files=files, timeout=60)
+                
+            if response.status_code == 200 and len(response.content) > 1000:
+                # अनुवादित PDF को सेव करना
+                with open(output_pdf_path, 'wb') as out_file:
+                    out_file.write(response.content)
 
-t = PrettyTable([f'{cn}Number{lrd}', f'{cn}info{lrd}'])
-t.add_row([f'{lgn}1{lrd}', f'{gn}Reporter Channel{lrd}'])
-t.add_row([f'{lgn}2{lrd}', f'{gn}Reporter Account{lrd}'])
-t.add_row([f'{lgn}3{lrd}', f'{gn}Reporter Group [Updating]{lrd}'])
-print(t)
+                # पुराना स्टेटस मैसेज डिलीट करके नई PDF भेजना
+                bot.delete_message(chat_id, status_msg.message_id)
+                with open(output_pdf_path, 'rb') as pdf_to_send:
+                    bot.send_document(
+                        chat_id, 
+                        pdf_to_send, 
+                        caption="✅ आपकी Scanned PDF का हिंदी अनुवाद (फिगर्स के साथ) तैयार है!"
+                    )
+            else:
+                raise Exception("Google Cloud Server did not return a valid PDF.")
 
-# --- यहाँ फ़िक्स किया गया है ---
-# Heroku पर input() नहीं चलेगा, इसलिए हम Environment Variable का इस्तेमाल करेंगे।
-# अगर कोई वेरिएबल नहीं सेट होगा, तो यह डिफ़ॉल्ट रूप से "2" चुन लेगा।
-number = os.environ.get("REPORTER_CHOICE", "2")
-print(f"{gn}Selected Number (from env): {cn}{number}\n")
+        except Exception as e:
+            bot.delete_message(chat_id, status_msg.message_id)
+            bot.reply_to(message, "❌ इस फोटो वाली PDF को प्रोसेस करने में समस्या आई। कृपया फाइल साइज छोटा करके दोबारा प्रयास करें।")
+            print(f"Cloud OCR Error: {e}")
+            
+        finally:
+            # टेम्परेरी फाइलों को डिलीट करना
+            if os.path.exists(input_pdf_path):
+                os.remove(input_pdf_path)
+            if os.path.exists(output_pdf_path):
+                os.remove(output_pdf_path)
+    else:
+        bot.reply_to(message, "❌ कृपया केवल PDF फ़ाइल ही भेजें।")
 
-if number == "1":
-    os.system("python report/reporter.py")
-elif number == "2":
-    os.system("python report/report.py")
-elif number == "3":
-    print("This section is being updated and will be added soon \n\nChannel :@Mannucybersecurity")
-else:
-    print(f"{rd}Invalid selection: {number}")
+if __name__ == "__main__":
+    print("Cloud OCR PDF Bot is running successfully...")
+    bot.infinity_polling()
