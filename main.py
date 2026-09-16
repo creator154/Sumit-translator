@@ -2,9 +2,6 @@ import os
 import telebot
 import requests
 import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
-import io
 from deep_translator import GoogleTranslator
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -22,13 +19,13 @@ def download_hindi_font():
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 नमस्ते! मुझे कोई भी Scanned या फोटो वाली English PDF भेजें। मैं इसके फिगर्स को सुरक्षित रखते हुए टेक्स्ट को हिंदी में बदल दूंगा।")
+    bot.reply_to(message, "👋 नमस्ते! मुझे कोई भी Scanned या फोटो वाली NEET English PDF भेजें। मैं क्लाउड OCR से अक्षरों को हिंदी में बदल दूंगा।")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     if message.document.mime_type == 'application/pdf':
         chat_id = message.chat.id
-        status_msg = bot.reply_to(message, "⏳ Scanned PDF मिल गई है। फोटो से टेक्स्ट को स्कैन करके अनुवाद किया जा रहा है, कृपया 1 मिनट का समय दें...")
+        status_msg = bot.reply_to(message, "⏳ Scanned PDF मिल गई है। Google Cloud OCR चालू हो रहा है, कृपया कुछ सेकंड इंतज़ार करें...")
 
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -45,42 +42,44 @@ def handle_docs(message):
             out_doc = fitz.open()
             
             for page in src_doc:
+                # 1. पेज का इमेज स्नैपशॉट
                 pix = page.get_pixmap(dpi=150)
-                img_data = pix.tobytes("png")
-                img = Image.open(io.BytesIO(img_data))
-                
-                # Tesseract से फोटो के अंदर लिखे शब्दों का डेटा (Text + Location) निकालना
-                data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
-                
                 new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
                 new_page.insert_image(new_page.rect, pixmap=pix)
                 
-                scale_x = page.rect.width / pix.width
-                scale_y = page.rect.height / pix.height
+                # 2. Google Web OCR API को रिक्वेस्ट भेजना (यह बिना किसी भारी लाइब्रेरी के फोटो स्कैन करता है)
+                img_bytes = pix.tobytes("png")
+                url = "https://googleapis.com"
+                payload = {'client': 'webapp', 'sl': 'en', 'tl': 'hi'}
+                files = [('image', ('page.png', img_bytes, 'image/png'))]
                 
-                n_boxes = len(data['text'])
-                for i in range(n_boxes):
-                    text = data['text'][i]
-                    # अगर बॉक्स में कोई इंग्लिश शब्द मिला है
-                    if text.strip() and len(text.strip()) > 1:
-                        try:
-                            translated_text = translator.translate(text)
-                            if translated_text.strip() == text.strip():
-                                continue
-                                
-                            x = data['left'][i] * scale_x
-                            y = data['top'][i] * scale_y
-                            w = data['width'][i] * scale_x
-                            h = data['height'][i] * scale_y
+                response = requests.post(url, data=payload, files=files, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # OCR से मिले टेक्स्ट ब्लॉक्स को प्रोसेस करना
+                    if 'textBlocks' in data:
+                        for block in data['textBlocks']:
+                            text = block.get('text', '')
+                            box = block.get('box', {})
                             
-                            rect = fitz.Rect(x, y, x + w, y + h)
-                            
-                            # पुरानी इंग्लिश फोटो को वाइट बॉक्स से छुपाना
-                            new_page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-                            # नई हिंदी टाइप करना
-                            new_page.insert_textbox(rect, translated_text, fontname="sans", fontfile=FONT_PATH, fontsize=8, align=0)
-                        except:
-                            continue
+                            if text.strip() and box:
+                                try:
+                                    translated_text = translator.translate(text)
+                                    
+                                    # गूगल के बॉक्स कोऑर्डिनेट्स को PDF साइज में बदलना
+                                    x0 = box.get('x', 0) * (page.rect.width / pix.width)
+                                    y0 = box.get('y', 0) * (page.rect.height / pix.height)
+                                    x1 = (box.get('x', 0) + box.get('w', 0)) * (page.rect.width / pix.width)
+                                    y1 = (box.get('y', 0) + box.get('h', 0)) * (page.rect.height / pix.height)
+                                    
+                                    rect = fitz.Rect(x0, y0, x1, y1)
+                                    
+                                    # पुरानी इंग्लिश मिटाना और नई हिंदी छापना
+                                    new_page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+                                    new_page.insert_textbox(rect, translated_text, fontname="sans", fontfile=FONT_PATH, fontsize=8, align=0)
+                                except:
+                                    continue
             
             out_doc.save(output_pdf_path, garbage=3, deflate=True)
             out_doc.close()
@@ -88,16 +87,18 @@ def handle_docs(message):
 
             bot.delete_message(chat_id, status_msg.message_id)
             with open(output_pdf_path, 'rb') as pdf_to_send:
-                bot.send_document(chat_id, pdf_to_send, caption="✅ OCR तकनीक द्वारा पूरी तरह अनुवादित हिंदी PDF तैयार है!")
+                bot.send_document(chat_id, pdf_to_send, caption="✅ Google Cloud OCR द्वारा पूरी तरह अनुवादित हिंदी PDF तैयार है!")
 
         except Exception as e:
             bot.delete_message(chat_id, status_msg.message_id)
-            bot.reply_to(message, f"❌ एरर: {e}\nसुनिश्चित करें कि आपने Heroku Settings में Buildpack ऐड कर लिया है।")
+            bot.reply_to(message, f"❌ अनुवाद में समस्या आई: {e}")
             
         finally:
             if os.path.exists(input_pdf_path): os.remove(input_pdf_path)
             if os.path.exists(output_pdf_path): os.remove(output_pdf_path)
+    else:
+        bot.reply_to(message, "❌ कृपया केवल PDF फ़ाइल ही भेजें।")
 
 if __name__ == "__main__":
-    print("Final OCR Bot is running...")
+    print("Cloud OCR Web Bot is running...")
     bot.infinity_polling()
