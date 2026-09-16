@@ -1,5 +1,2 @@
 pyTelegramBotAPI
-pypdf
-fpdf2
 requests
-deep-translator
