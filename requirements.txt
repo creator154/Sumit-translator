@@ -2,5 +2,3 @@ pyTelegramBotAPI
 pymupdf
 requests
 deep-translator
-pytesseract
-Pillow
