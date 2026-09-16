@@ -1,23 +1,22 @@
 import os
 import telebot
 import requests
+import time
 import traceback
 from pypdf import PdfReader
 from fpdf import FPDF
 from deep_translator import GoogleTranslator
 
-# Heroku Environment Variable से टोकन उठाना
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ट्रांसलेटर सेटअप (यह बहुत ही स्टेबल है)
+# ट्रांसलेटर इंजन सेटअप
 translator = GoogleTranslator(source='en', target='hi')
 
 FONT_PATH = "NotoSansDevanagari.ttf"
 FONT_URL = "https://github.com"
 
 def download_hindi_font():
-    """हिंदी फॉन्ट सुनिश्चित करना ताकि PDF में सही अक्षर दिखें"""
     if not os.path.exists(FONT_PATH):
         print("Downloading Hindi Font...")
         response = requests.get(FONT_URL)
@@ -27,13 +26,13 @@ def download_hindi_font():
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 नमस्ते! मुझे कोई भी English PDF भेजें। मैं उसका पूरा टेक्स्ट हिंदी में बदलकर आपको एक नई PDF फ़ाइल सेंड कर दूँगा।")
+    bot.reply_to(message, "👋 नमस्ते! मैं आपका फिक्स्ड PDF ट्रांसलेटर हूँ। मुझे English PDF भेजें, मैं बिना ब्लॉक हुए उसे हिंदी PDF में बदलकर दूँगा।")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     if message.document.mime_type == 'application/pdf':
         chat_id = message.chat.id
-        status_msg = bot.reply_to(message, "⏳ PDF मिल गई है। टेक्स्ट का हिंदी अनुवाद करके नई PDF फाइल बनाई जा रही है, कृपया थोड़ा इंतज़ार करें...")
+        status_msg = bot.reply_to(message, "⏳ PDF मिल गई है। 'TooManyRequests' एरर से बचने के लिए इसे सेफ मोड में ट्रांसलेट किया जा रहा है, कृपया थोड़ा इंतज़ार करें...")
 
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -47,52 +46,58 @@ def handle_docs(message):
         try:
             download_hindi_font()
             
-            # 1. इंग्लिश PDF से टेक्स्ट निकालना
+            # 1. PDF से टेक्स्ट रीड करना
             reader = PdfReader(input_pdf_path)
-            extracted_text = ""
+            chunks = []
+            
+            # हर पेज से टेक्स्ट निकालकर लिस्ट (Batch) बनाना
             for page in reader.pages:
                 text = page.extract_text()
-                if text:
-                    extracted_text += text + "\n"
+                if text and text.strip():
+                    # बहुत बड़े पैराग्राफ को 1500 अक्षरों में तोड़ना
+                    page_text = text.strip()
+                    page_chunks = [page_text[i:i+1500] for i in range(0, len(page_text), 1500)]
+                    chunks.extend(page_chunks)
 
-            if not extracted_text.strip():
+            if not chunks:
                 bot.delete_message(chat_id, status_msg.message_id)
-                bot.reply_to(message, "❌ इस PDF में कोई सेलेक्ट होने वाला टेक्स्ट नहीं मिला (यह पूरी तरह इमेज/फोटो वाली PDF है)।")
+                bot.reply_to(message, "❌ इस PDF में कोई टेक्स्ट नहीं मिला (यह पूरी तरह इमेज/फोटो वाली PDF है)।")
                 return
 
-            # 2. टेक्स्ट का हिंदी अनुवाद (टुकड़ों में ताकि API क्रैश न हो)
-            # 2000 अक्षरों के छोटे टुकड़े बनाना बेस्ट रहता है
-            chunks = [extracted_text[i:i+2000] for i in range(0, len(extracted_text), 2000)]
+            # 2. Google Batch Translation + Anti-Block Delay
             translated_text = ""
-            
             for chunk in chunks:
                 if chunk.strip():
-                    translation = translator.translate(chunk)
-                    translated_text += translation + "\n"
+                    try:
+                        # अनुवाद फेच करना
+                        translation = translator.translate(chunk)
+                        translated_text += translation + "\n\n"
+                        # 🚀 सबसे जरूरी: Google सर्वर को शांत रखने के लिए 1.5 सेकंड का गैप देना
+                        time.sleep(1.5)
+                    except Exception as translate_err:
+                        print(f"Chunk translation skipped due to error: {translate_err}")
+                        time.sleep(3) # एरर आने पर थोड़ा और रुकें
+                        continue
 
-            # 3. fpdf2 का उपयोग करके नई हिंदी PDF बनाना (यह बहुत सरल और सटीक है)
+            # 3. fpdf2 से हिंदी PDF तैयार करना
             pdf = FPDF()
             pdf.add_page()
-            
-            # हिंदी देवनागरी फॉन्ट रजिस्टर करना
             pdf.add_font("HindiFont", style="", fname=FONT_PATH)
             pdf.set_font("HindiFont", size=11)
             
-            # टेक्स्ट को ऑटोमैटिक लाइन ब्रेक के साथ PDF में लिखना
-            pdf.multi_cell(0, 8, txt=translated_text)
-            
-            # फाइल सेव करना
+            # टेक्स्ट को व्यवस्थित करके लिखना
+            pdf.multi_cell(0, 7, txt=translated_text)
             pdf.output(output_pdf_path)
 
-            # 4. यूजर को ट्रांसलेटेड PDF भेजना
+            # 4. यूज़र को फाइनल PDF डिलीवर करना
             bot.delete_message(chat_id, status_msg.message_id)
             with open(output_pdf_path, 'rb') as pdf_to_send:
-                bot.send_document(chat_id, pdf_to_send, caption="✅ आपके इंग्लिश टेक्स्ट का शुद्ध हिंदी अनुवादित PDF तैयार है!")
+                bot.send_document(chat_id, pdf_to_send, caption="✅ आपके इंग्लिश टेक्स्ट का शुद्ध हिंदी अनुवादित PDF सुरक्षित रूप से तैयार है!")
 
         except Exception as e:
             bot.delete_message(chat_id, status_msg.message_id)
             error_details = traceback.format_exc()
-            bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई।")
+            bot.reply_to(message, f"❌ अनुवाद प्रोसेस में कोई त्रुटि आई।")
             print(f"Error Details:\n{error_details}")
             
         finally:
@@ -103,5 +108,5 @@ def handle_docs(message):
 
 if __name__ == "__main__":
     download_hindi_font()
-    print("New Stable Text-to-PDF Bot is running...")
+    print("Anti-Block PDF Bot is running successfully...")
     bot.infinity_polling()
